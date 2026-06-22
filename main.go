@@ -9,18 +9,18 @@ import (
 	"github.com/mJehanno/bubble-tab/internal/model"
 )
 
-type theme struct {
-	primary        string
-	secundary      string
-	tercary        string
-	activeBorder   borderType
-	inactiveBorder borderType
-	disabledBorder borderType
+type Theme struct {
+	Primary        string
+	Secundary      string
+	Tercary        string
+	ActiveBorder   BorderType
+	InactiveBorder BorderType
+	DisabledBorder BorderType
 }
 
-type borderType string
+type BorderType string
 
-func (b borderType) toLipglossBorder() lipgloss.Border {
+func (b BorderType) toLipglossBorder() lipgloss.Border {
 	switch b {
 	case Normal:
 		return lipgloss.NormalBorder()
@@ -48,24 +48,24 @@ func (b borderType) toLipglossBorder() lipgloss.Border {
 }
 
 const (
-	None      borderType = "none"
-	Normal    borderType = "normal"
-	Rounded   borderType = "rounded"
-	Block     borderType = "block"
-	OuterHalf borderType = "outerHalf"
-	InnerHalf borderType = "innerHalf"
-	Thick     borderType = "thick"
-	Double    borderType = "double"
-	Hidden    borderType = "hidden"
-	Markdown  borderType = "markdown"
-	Ascii     borderType = "ascii"
+	None      BorderType = "none"
+	Normal    BorderType = "normal"
+	Rounded   BorderType = "rounded"
+	Block     BorderType = "block"
+	OuterHalf BorderType = "outerHalf"
+	InnerHalf BorderType = "innerHalf"
+	Thick     BorderType = "thick"
+	Double    BorderType = "double"
+	Hidden    BorderType = "hidden"
+	Markdown  BorderType = "markdown"
+	Ascii     BorderType = "ascii"
 )
 
 type (
 	TabModel struct {
 		tabs    []model.Tab
 		current uint64
-		theme   theme
+		theme   Theme
 	}
 	TabModelOption func(*TabModel)
 )
@@ -82,6 +82,12 @@ func WithCurrent(current uint64) TabModelOption {
 	}
 }
 
+func WithTheme(theme Theme) TabModelOption {
+	return func(tm *TabModel) {
+		tm.theme = theme
+	}
+}
+
 func New(options ...TabModelOption) *TabModel {
 	tabModel := new(TabModel)
 	for _, o := range options {
@@ -91,7 +97,7 @@ func New(options ...TabModelOption) *TabModel {
 }
 
 func (t TabModel) Init() tea.Cmd {
-	return nil
+	return t.tabs[t.current].Body().Init()
 }
 
 func (t *TabModel) moveForward() {
@@ -137,6 +143,7 @@ func (t TabModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t.moveForward()
 			}
 			t.tabs[t.current].SetState(model.Active)
+			return t, t.tabs[t.current].Body().Init()
 		}
 	}
 	return t, nil
@@ -149,15 +156,15 @@ const (
 	body tabPart = "body"
 )
 
-func (t theme) apply(state model.TabState, part tabPart, content string) string {
+func (t Theme) apply(state model.TabState, part tabPart, content string) string {
 	newStyle := lipgloss.NewStyle()
 	switch state {
 	case model.Active:
 		if part == head {
 			return newStyle.
-				BorderStyle(t.activeBorder.toLipglossBorder()).
-				BorderForeground(lipgloss.Color(t.secundary)).
-				Foreground(lipgloss.Color(t.primary)).
+				BorderStyle(t.ActiveBorder.toLipglossBorder()).
+				BorderForeground(lipgloss.Color(t.Secundary)).
+				Foreground(lipgloss.Color(t.Primary)).
 				Render(content)
 		} else {
 			return newStyle.Render(content)
@@ -165,9 +172,9 @@ func (t theme) apply(state model.TabState, part tabPart, content string) string 
 	case model.Inactive:
 		if part == head {
 			return newStyle.
-				BorderStyle(t.inactiveBorder.toLipglossBorder()).
-				BorderForeground(lipgloss.Color(t.tercary)).
-				Foreground(lipgloss.Color(t.secundary)).
+				BorderStyle(t.InactiveBorder.toLipglossBorder()).
+				BorderForeground(lipgloss.Color(t.Tercary)).
+				Foreground(lipgloss.Color(t.Secundary)).
 				Render(content)
 		} else {
 			return newStyle.Render(content)
@@ -175,9 +182,9 @@ func (t theme) apply(state model.TabState, part tabPart, content string) string 
 	default:
 		if part == head {
 			return newStyle.
-				BorderStyle(t.disabledBorder.toLipglossBorder()).
+				BorderStyle(t.DisabledBorder.toLipglossBorder()).
 				BorderForeground(lipgloss.White).
-				Foreground(lipgloss.Color(t.tercary)).
+				Foreground(lipgloss.Color(t.Tercary)).
 				Render(content)
 		} else {
 			return newStyle.Render(content)
@@ -191,6 +198,8 @@ func (t TabModel) View() tea.View {
 		view.WriteString(t.theme.apply(tab.State(), head, tab.Name()))
 	}
 	view.WriteString("\n")
-	view.WriteString(t.theme.apply(t.tabs[t.current].State(), body, t.tabs[t.current].Body().View().Content))
+	if t.tabs[t.current].HasPermission() {
+		view.WriteString(t.theme.apply(t.tabs[t.current].State(), body, t.tabs[t.current].Body().View().Content))
+	}
 	return tea.NewView(view.String())
 }

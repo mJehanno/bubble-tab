@@ -11,9 +11,10 @@ const (
 type (
 	TabState string
 	Tab      struct {
-		name    string
-		state   TabState
-		content tea.Model
+		name          string
+		state         TabState
+		content       tea.Model
+		hasPermission bool
 	}
 	TabOption func(*Tab)
 )
@@ -28,8 +29,16 @@ func (t Tab) Body() tea.Model {
 	return t.content
 }
 
+func (t Tab) HasPermission() bool {
+	return t.hasPermission
+}
+
 func (t *Tab) SetState(state TabState) {
 	t.state = state
+}
+
+func (t *Tab) SetHasPermission(hasPerm bool) {
+	t.hasPermission = hasPerm
 }
 
 func NewTab(options ...TabOption) *Tab {
@@ -50,8 +59,15 @@ func WithState(state TabState) TabOption {
 		t.state = state
 	}
 }
+
 func WithBody(body tea.Model) TabOption {
 	return func(t *Tab) {
 		t.content = body
+	}
+}
+
+func WithHasPermission(hasPerm bool) TabOption {
+	return func(t *Tab) {
+		t.hasPermission = hasPerm
 	}
 }
