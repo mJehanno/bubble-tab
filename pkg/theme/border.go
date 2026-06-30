@@ -1,6 +1,18 @@
-// Package theme defines the theming subsystem for bubble-tab: semantic color
-// palettes, border styles, prebuilt themes, and the derived lipgloss styles
-// used to render tabs.
+// Package theme defines the theming subsystem for bubble-tab.
+//
+// The main types are:
+//   - Palette — a semantic six-color set (primary, secondary, tertiary,
+//     foreground, background, border).
+//   - Theme — pairs a Dark and a Light Palette with per-state BorderType values
+//     and exposes Active/Toggle/WithDark to select the active variant.
+//   - Styles — precomputed lipgloss styles (header + body for each of the three
+//     tab states) derived by calling Theme.Styles() or New(theme).
+//   - BorderType — a string enum mapping to lipgloss border constructors.
+//
+// Three ready-to-use presets are provided: Gruvbox, TokyoNight, and Catppuccin,
+// each with dark and light palette variants (IsDark=true by default).
+// Catppuccin additionally exposes CatppuccinPalette(flavor) for per-flavor
+// palette access.
 package theme
 
 import "charm.land/lipgloss/v2"

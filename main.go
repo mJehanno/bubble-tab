@@ -1,7 +1,35 @@
-// Package bubbletab provides a Bubble Tea model that renders a row of tabs and
-// forwards messages to the body of the currently active tab. Tab bodies are
-// initialized lazily on first activation and their state is preserved across
-// switches.
+// Package bubbletab provides a tabbed-navigation model for Bubble Tea v2
+// (charm.land/bubbletea/v2). It renders a horizontal row of clickable tab
+// headers and delegates rendering and message handling to the body of the
+// currently active tab.
+//
+// # Quick start
+//
+//	tabs := []model.Tab{
+//	    *model.NewTab(model.WithName("Home"), model.WithBody(homeModel{})),
+//	    *model.NewTab(model.WithName("Settings"), model.WithBody(settingsModel{})),
+//	}
+//	tm := bubbletab.New(
+//	    bubbletab.WithTabs(tabs),
+//	    bubbletab.WithTheme(theme.Catppuccin()),
+//	)
+//	// Embed tm in your root model and delegate Init/Update/View to it.
+//
+// # Key behaviors
+//
+//   - Lazy init: a tab body's Init runs exactly once, on first activation.
+//     State is preserved across subsequent tab switches; the body is never
+//     re-initialized.
+//   - Lazy construction: WithBodyFunc(func() tea.Model) defers even the
+//     allocation of a body until first activation. Never-visited tabs are
+//     never constructed.
+//   - Message forwarding: non-navigation messages are forwarded only to the
+//     active tab's body. WindowSizeMsg is broadcast to all already-built bodies.
+//   - Navigation: Tab (next), Shift+Tab (previous), 1-9 (direct jump by
+//     one-based index), and left-click on any header. Disabled tabs are skipped.
+//   - Theming: import github.com/mJehanno/bubble-tab/pkg/theme and use one of
+//     Gruvbox(), TokyoNight(), or Catppuccin(). Custom themes are supported by
+//     building a Theme struct directly.
 package bubbletab
 
 import (
@@ -32,6 +60,21 @@ type (
 		paddingX int
 		paddingY int
 		keymap   KeyMap
+		// mouseMode is applied to the view returned by View. Header clicks are
+		// only delivered when mouse reporting is enabled, so this defaults to
+		// tea.MouseModeCellMotion; set it to tea.MouseModeNone via WithMouseMode
+		// to opt out (e.g. when a parent model owns mouse configuration).
+		mouseMode tea.MouseMode
+		// hasCustomStyles reports whether WithStyles supplied an explicit Styles
+		// value; when false the styles are derived from the theme in New.
+		hasCustomStyles bool
+		// padX/padY and marginX/marginY are the horizontal/vertical header spacing
+		// requested via WithPadding/WithMargin. The has* flags record whether each
+		// was set so a value of zero still means "set to zero" rather than "unset".
+		padX, padY       int
+		marginX, marginY int
+		hasPadding       bool
+		hasMargin        bool
 	}
 	// TabModelOption configures a TabModel during construction with New.
 	TabModelOption func(*TabModel)
@@ -41,48 +84,116 @@ type (
 // clicked; Update reacts by activating the corresponding tab.
 type tabClickMsg struct{ index int }
 
-// WithTabs sets the tabs displayed by the model.
+// WithTabs sets the ordered list of tabs displayed by the model. Each Tab
+// should be constructed with model.NewTab. The slice is stored by value so
+// subsequent mutations to the caller's slice do not affect the TabModel.
 func WithTabs(tabs []model.Tab) TabModelOption {
 	return func(tm *TabModel) {
 		tm.tabs = tabs
 	}
 }
 
-// WithCurrent selects the initially active tab by index.
+// WithCurrent selects the initially active tab by zero-based index. Values
+// outside [0, len(tabs)-1] are clamped silently so the model is always in a
+// consistent state after New returns.
 func WithCurrent(current int) TabModelOption {
 	return func(tm *TabModel) {
 		tm.current = current
 	}
 }
 
-// WithTheme sets the theme used to derive the model's styles.
+// WithTheme sets the theme whose palette and border configuration are used to
+// derive the model's lipgloss styles. Styles are computed once in New; to
+// switch variant at runtime (e.g. dark/light toggle) build a new TabModel with
+// the updated theme or call theme.Toggle and pass the result here.
 func WithTheme(theme thm.Theme) TabModelOption {
 	return func(tm *TabModel) {
 		tm.theme = theme
 	}
 }
 
-// WithKeyMap overrides the default navigation key bindings.
+// WithKeyMap overrides the default navigation key bindings. The KeyMap fields
+// are key.Binding values and can be reused in a bubbles/v2 help component to
+// display a key-binding legend to the user.
 func WithKeyMap(keymap KeyMap) TabModelOption {
 	return func(tm *TabModel) {
 		tm.keymap = keymap
 	}
 }
 
-// New builds a TabModel from the given options. If no theme is supplied it
-// defaults to Catppuccin, and the derived styles are always populated. The
-// current index is clamped to a valid tab and that tab's state is set to
-// model.Active so the model is consistent without extra caller setup.
+// WithMouseMode overrides the mouse mode applied to the view. The default is
+// tea.MouseModeCellMotion so that header clicks work when TabModel is used as
+// the root model. Pass tea.MouseModeNone to disable, e.g. when a parent model
+// is responsible for mouse configuration.
+func WithMouseMode(mode tea.MouseMode) TabModelOption {
+	return func(tm *TabModel) {
+		tm.mouseMode = mode
+	}
+}
+
+// WithStyles replaces the model's styles entirely, taking precedence over the
+// theme: when supplied, New uses these styles verbatim instead of deriving them
+// from the theme's palette. Build a base set with theme.Theme.Styles (or
+// theme.New) and adjust the per-state lipgloss styles as needed. Any spacing
+// from WithPadding/WithMargin is layered on top of these styles afterwards.
+func WithStyles(styles thm.Styles) TabModelOption {
+	return func(tm *TabModel) {
+		tm.styles = styles
+		tm.hasCustomStyles = true
+	}
+}
+
+// WithPadding sets the padding applied inside each tab header's border, with x
+// controlling the left/right padding and y the top/bottom padding. It layers on
+// top of the active styles (theme-derived or from WithStyles) and is reflected
+// in mouse hit-testing, so header clicks stay aligned.
+func WithPadding(x, y int) TabModelOption {
+	return func(tm *TabModel) {
+		tm.padX, tm.padY = x, y
+		tm.hasPadding = true
+	}
+}
+
+// WithMargin sets the margin applied outside each tab header's border, with x
+// controlling the left/right margin (the gap between tabs) and y the top/bottom
+// margin. It layers on top of the active styles (theme-derived or from
+// WithStyles) and is reflected in mouse hit-testing, so header clicks stay
+// aligned.
+func WithMargin(x, y int) TabModelOption {
+	return func(tm *TabModel) {
+		tm.marginX, tm.marginY = x, y
+		tm.hasMargin = true
+	}
+}
+
+// New builds a TabModel from the given options and returns a pointer to it.
+// Defaults applied before options are processed:
+//   - theme: theme.Catppuccin() (dark Mocha / light Latte)
+//   - keymap: DefaultKeyMap() (Tab/Shift+Tab/1-9)
+//   - mouseMode: tea.MouseModeCellMotion (enables header click-to-activate)
+//
+// After all options are applied:
+//  1. Styles are derived from the active theme palette, unless WithStyles
+//     supplied an explicit set, in which case those are used as-is.
+//  2. Any WithPadding/WithMargin spacing is layered onto the header styles and
+//     reflected in mouse hit-testing.
+//  3. The current index is clamped to [0, len(tabs)-1].
+//  4. The tab at current is unconditionally set to model.Active; all others
+//     keep whatever state they were given.
 func New(options ...TabModelOption) *TabModel {
 	tabModel := &TabModel{
-		theme:  thm.Catppuccin(),
-		keymap: DefaultKeyMap(),
+		theme:     thm.Catppuccin(),
+		keymap:    DefaultKeyMap(),
+		mouseMode: tea.MouseModeCellMotion,
 	}
 	for _, o := range options {
 		o(tabModel)
 	}
 
-	tabModel.styles = tabModel.theme.Styles()
+	if !tabModel.hasCustomStyles {
+		tabModel.styles = tabModel.theme.Styles()
+	}
+	tabModel.applyHeaderSpacing()
 	tabModel.clampCurrent()
 
 	// The current tab is active by definition; mark it so via a pointer into the
@@ -106,6 +217,29 @@ func (t *TabModel) clampCurrent() {
 	if t.current >= len(t.tabs) {
 		t.current = len(t.tabs) - 1
 	}
+}
+
+// applyHeaderSpacing layers the WithPadding/WithMargin spacing onto every
+// header style. Because View computes mouse hit-test spans from the rendered
+// (and therefore already-spaced) header strings, no separate offset bookkeeping
+// is needed for clicks to remain aligned. lipgloss takes spacing as (vertical,
+// horizontal), so y maps to top/bottom and x to left/right.
+func (t *TabModel) applyHeaderSpacing() {
+	if !t.hasPadding && !t.hasMargin {
+		return
+	}
+	space := func(s lipgloss.Style) lipgloss.Style {
+		if t.hasPadding {
+			s = s.Padding(t.padY, t.padX)
+		}
+		if t.hasMargin {
+			s = s.Margin(t.marginY, t.marginX)
+		}
+		return s
+	}
+	t.styles.ActiveHeader = space(t.styles.ActiveHeader)
+	t.styles.InactiveHeader = space(t.styles.InactiveHeader)
+	t.styles.DisabledHeader = space(t.styles.DisabledHeader)
 }
 
 // buildAndPrime ensures the body of the tab at index exists and is ready to be
@@ -145,8 +279,9 @@ func (t *TabModel) buildAndPrime(index int) tea.Cmd {
 	return tea.Batch(sizeCmd, initCmd)
 }
 
-// Init initializes only the current tab's body, leaving other tabs to be
-// initialized lazily the first time they are activated.
+// Init initializes only the current tab's body and returns its Init command (if
+// any). All other tabs remain uninitialized and are built lazily on first
+// activation via activate/buildAndPrime. Init satisfies the tea.Model interface.
 func (t TabModel) Init() tea.Cmd {
 	if len(t.tabs) == 0 {
 		return nil
@@ -199,8 +334,10 @@ func (t TabModel) moveBackward() int {
 	return t.current
 }
 
-// Update handles navigation keys and tab clicks itself; every other message is
-// forwarded to the active tab's body so its state is updated and preserved.
+// Update handles navigation messages (Tab, Shift+Tab, 1-9 jump, mouse header
+// click, WindowSizeMsg) and forwards all other messages to the active tab's
+// body, persisting the returned model so child state survives tab switches.
+// Update satisfies the tea.Model interface and always returns a *TabModel.
 func (t TabModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(t.tabs) == 0 {
 		return t, nil
@@ -280,9 +417,11 @@ func (t TabModel) handleResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	return t, tea.Batch(cmds...)
 }
 
-// View renders the header row followed by the active tab's body (when the tab
-// grants permission). The returned view carries a mouse handler that maps
-// clicks on the header row to tab activations.
+// View renders the horizontal header row followed by the body of the active tab
+// (when HasPermission is true). The returned tea.View has its OnMouse handler
+// set to a hit-tester that emits a tab-activation event for left clicks on any
+// header, and MouseMode set per the configured mouseMode (default:
+// tea.MouseModeCellMotion). View satisfies the tea.Model interface.
 func (t TabModel) View() tea.View {
 	if len(t.tabs) == 0 {
 		return tea.NewView("")
@@ -309,6 +448,7 @@ func (t TabModel) View() tea.View {
 	}
 
 	view := tea.NewView(content.String())
+	view.MouseMode = t.mouseMode
 	view.OnMouse = makeHeaderMouseHandler(headers, t.paddingX, t.paddingY)
 	return view
 }

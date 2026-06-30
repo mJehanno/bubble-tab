@@ -2,17 +2,17 @@ package bubbletab
 
 import "charm.land/bubbles/v2/key"
 
-// KeyMap describes the key bindings used to navigate between tabs. Its fields
-// are exposed as key.Binding values so they can be reused for help text or
-// reconfigured by callers via WithKeyMap.
+// KeyMap describes the key bindings used to navigate between tabs. Each field
+// is a key.Binding so the bindings can be integrated with a bubbles/v2 help
+// component or overridden entirely via WithKeyMap.
 type KeyMap struct {
-	// Next moves focus to the next non-disabled tab.
+	// Next moves focus to the next non-disabled tab, wrapping around.
 	Next key.Binding
-	// Prev moves focus to the previous non-disabled tab.
+	// Prev moves focus to the previous non-disabled tab, wrapping around.
 	Prev key.Binding
-	// Jump documents the 1-9 number keys that jump directly to a tab. The jump
-	// itself is matched on the pressed rune in Update; this binding exists for
-	// help and discoverability.
+	// Jump documents the 1-9 number-key bindings that jump directly to a tab by
+	// its one-based position. The matching logic lives in Update; this binding
+	// exists for help text and discoverability rather than for dispatch.
 	Jump key.Binding
 }
 
